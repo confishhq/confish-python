@@ -22,7 +22,7 @@ class ActionUpdater(Protocol):
 ActionHandler = Callable[[Action, ActionUpdater], "dict[str, Any] | None"]
 
 
-class _SkipAction(Exception):
+class _SkipAction(Exception):  # noqa: N818  control-flow signal, not an error
     """Raised inside a handler to leave the action acknowledged without resolving it."""
 
 
@@ -123,7 +123,7 @@ class Actions:
             while not stop.is_set():
                 try:
                     actions = self.list()
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     if on_error is not None:
                         on_error(exc, Action(id="", type="", status="pending"))
                     if stop.wait(_backoff_delay(empty_polls, poll_interval, max_poll_interval)):
@@ -164,7 +164,7 @@ class Actions:
             self.ack(action.id)
         except ConflictError:
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if on_error is not None:
                 on_error(exc, action)
             return
@@ -175,14 +175,14 @@ class Actions:
             result = handler(action, updater)
         except _SkipAction:
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if on_error is not None:
                 on_error(exc, action)
             if stop.is_set():
                 return
             try:
                 self.fail(action.id, {"error": str(exc)})
-            except Exception as fail_exc:  # noqa: BLE001
+            except Exception as fail_exc:
                 if on_error is not None:
                     on_error(fail_exc, action)
             return
@@ -191,7 +191,7 @@ class Actions:
             return
         try:
             self.complete(action.id, result if isinstance(result, dict) else None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if on_error is not None:
                 on_error(exc, action)
 
