@@ -12,9 +12,9 @@ from ._types import Action
 
 
 class ActionUpdater(Protocol):
-    """Passed to handlers so they can append timeline updates."""
+    """Passed to handlers so they can append progress notes to the action's timeline."""
 
-    def update(
+    def progress(
         self, message: str, data: dict[str, Any] | None = None
     ) -> Action: ...
 
@@ -50,10 +50,10 @@ class Actions:
         )
         return Action.from_dict(response)
 
-    def update(
+    def progress(
         self, action_id: str, message: str, data: dict[str, Any] | None = None
     ) -> Action:
-        """Append a timeline update visible in the dashboard."""
+        """Append a progress note to the action's timeline, visible in the dashboard."""
         body: dict[str, Any] = {"message": message}
         if data is not None:
             body["data"] = data
@@ -201,10 +201,10 @@ class _Updater:
         self._actions = actions
         self._action_id = action_id
 
-    def update(
+    def progress(
         self, message: str, data: dict[str, Any] | None = None
     ) -> Action:
-        return self._actions.update(self._action_id, message, data)
+        return self._actions.progress(self._action_id, message, data)
 
 
 def _backoff_delay(empty_polls: int, base: float, maximum: float) -> float:

@@ -1,6 +1,6 @@
 # confish
 
-Official Python SDK for [confish](https://confi.sh) — typed configuration, actions, and webhook verification.
+Official Python SDK for [confish](https://confi.sh) — typed configuration, feeds, actions, and webhook verification.
 
 - One dependency (`httpx`)
 - Sync client with typed exceptions and automatic retry on `429`/`5xx`
@@ -25,7 +25,7 @@ client = Confish(
     api_key="confish_sk_...",
 )
 
-config = client.fetch()
+config = client.config.fetch()
 print(config["site_name"])
 ```
 
@@ -39,7 +39,7 @@ class MyConfig(TypedDict):
     max_upload_mb: int
     maintenance_mode: bool
 
-config = cast(MyConfig, client.fetch())
+config = cast(MyConfig, client.config.fetch())
 config["maintenance_mode"]  # type-checked as bool
 ```
 
@@ -53,20 +53,20 @@ class MyConfig(BaseModel):
     max_upload_mb: int
     maintenance_mode: bool
 
-config = MyConfig.model_validate(client.fetch())
+config = MyConfig.model_validate(client.config.fetch())
 ```
 
 ## Reading and writing config
 
 ```python
 # GET /c/{env_id}
-config = client.fetch()
+config = client.config.fetch()
 
 # PATCH — only listed fields change
-client.update({"maintenance_mode": True})
+client.config.update({"maintenance_mode": True})
 
 # PUT — replaces everything; omitted fields reset to defaults
-client.replace({
+client.config.replace({
     "site_name": "My App",
     "max_upload_mb": 50,
     "maintenance_mode": False,
@@ -77,17 +77,49 @@ client.replace({
 
 > Write access must be enabled in environment settings before `update` and `replace` will work.
 
+## Feeds
+
+Feeds hold living, externally-keyed state — one item per `external_id`, partitioned per environment. `client.feed(slug)` returns a bound handle; no HTTP happens until you call a method.
+
+```python
+jobs = client.feed("jobs")
+
+# Create or replace an item (PUT). Expires after 24 hours.
+jobs.set("sitemap-crawl", {"status": "running", "pages": 1204}, ttl=86400)
+
+# Live items, newest first -> list[FeedItem]
+for item in jobs.list():
+    print(item.external_id, item.data, item.expires_at)
+
+# Idempotent — deleting a missing item succeeds
+jobs.delete("sitemap-crawl")
+
+# Replace the whole feed in one request — built for sync-style cron jobs
+# pushing their full dataset. Anything absent is DELETED; [] clears the feed.
+result = jobs.replace([
+    {"external_id": "sitemap-crawl", "data": {"status": "running"}, "ttl": 86400},
+    {"external_id": "price-sync", "data": {"status": "queued"}},
+])
+print(result.created, result.updated, result.deleted)
+```
+
+`set` upserts with declarative PUT semantics: the item's data becomes exactly what you pass, and the TTL becomes exactly `ttl`. **Omitting `ttl` makes the item permanent — it clears any TTL set by a previous `set`.** `ttl` is in seconds (1 to 2,592,000 — 30 days); `external_id` is limited to 255 characters.
+
+`replace` applies the same declarative semantics to the whole partition: it's all-or-nothing (duplicate external IDs, exceeding the plan's item cap, or any schema-invalid item raises `ValidationError` with nothing written) and returns a `FeedReplaceResult` with `created`/`updated`/`deleted` counts.
+
+Each `FeedItem` has `id`, `external_id`, `data`, `expires_at` (`None` for permanent items), `created_at`, and `updated_at` (ISO 8601 strings). An unknown feed slug raises `NotFoundError`; a schema mismatch or full feed raises `ValidationError`.
+
 ## Logging
 
 ```python
-client.logger.info("Worker started", {"region": "eu-west-1"})
-client.logger.error("Job failed", {"job_id": "abc"})
+client.logs.info("Worker started", {"region": "eu-west-1"})
+client.logs.error("Job failed", {"job_id": "abc"})
 
-# Or directly:
-log_id = client.log(level="info", message="User logged in", context={"user_id": 123})
+# Or with an explicit level:
+log_id = client.logs.write("info", "User logged in", {"user_id": 123})
 ```
 
-Levels: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`.
+Levels: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, `emergency`. They follow RFC 5424 (syslog), so they map 1:1 onto stdlib `logging` levels.
 
 ## Actions
 
@@ -102,7 +134,7 @@ stop = threading.Event()
 
 def handler(action: Action, ctx) -> dict | None:
     if action.type == "place_order":
-        ctx.update("Submitting order", {"params": action.params})
+        ctx.progress("Submitting order", {"params": action.params})
         # ... do work ...
         return {"order_id": "abc123", "filled_price": 66980.0}
     raise RuntimeError(f"Unknown action type: {action.type}")
@@ -134,34 +166,39 @@ You can also drive the lifecycle manually:
 ```python
 actions = client.actions.list()
 client.actions.ack("action_id")
-client.actions.update("action_id", "progress", {"step": 2})
+client.actions.progress("action_id", "closing 3 positions", {"step": 2})
 client.actions.complete("action_id", {"order_id": "abc"})
 client.actions.fail("action_id", {"error": "timeout"})
 ```
 
 ## Webhook verification
 
+`verify` parses and verifies in one operation: it returns the parsed `WebhookPayload` on success and raises on failure, so the payload you handle is guaranteed to be the exact bytes the signature covers.
+
 ```python
 from flask import Flask, request, abort
-from confish.webhook import verify
+from confish.webhook import verify, WebhookSignatureError, WebhookTimestampError
 import os
 
 app = Flask(__name__)
 
 @app.post("/webhook")
 def webhook():
-    if not verify(
-        body=request.data,
-        signature=request.headers.get("X-Confish-Signature"),
-        secret=os.environ["CONFISH_WEBHOOK_SECRET"],
-    ):
+    try:
+        payload = verify(
+            body=request.data,
+            signature=request.headers.get("X-Confish-Signature"),
+            secret=os.environ["CONFISH_WEBHOOK_SECRET"],
+        )
+    except WebhookTimestampError:
+        abort(401, "stale timestamp")
+    except WebhookSignatureError:
         abort(401, "invalid signature")
-    payload = request.get_json()
-    # handle payload['event'] ...
+    # handle payload.event, payload.changes, payload.values ...
     return "", 200
 ```
 
-`verify` uses constant-time comparison and rejects timestamps older than 5 minutes by default. Pass `tolerance_seconds=0` to disable timestamp checking. Always pass the **raw, unparsed body** — re-serializing parsed JSON breaks verification.
+`verify` uses constant-time comparison and rejects timestamps older than 5 minutes by default (`WebhookTimestampError`). Pass `tolerance_seconds=0` to disable timestamp checking. Both exceptions subclass `WebhookVerificationError` (itself a `ConfishError`) if you don't need to distinguish them. Always pass the **raw, unparsed body** — re-serializing parsed JSON breaks verification.
 
 ## Errors
 
@@ -172,13 +209,14 @@ from confish import (
     ConflictError,
     ForbiddenError,
     NetworkError,
+    NotFoundError,
     RateLimitError,
     ServerError,
     ValidationError,
 )
 
 try:
-    client.fetch()
+    client.config.fetch()
 except RateLimitError as e:
     print(f"slow down — retry after {e.retry_after}s")
 except ValidationError as e:
@@ -208,7 +246,7 @@ client = Confish(
 
 ```python
 with Confish(env_id="...", api_key="...") as client:
-    config = client.fetch()
+    config = client.config.fetch()
 ```
 
 ## License

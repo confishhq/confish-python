@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 LogLevel = Literal[
-    "debug", "info", "notice", "warning", "error", "critical", "alert"
+    "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
 ]
 
 ActionStatus = Literal[
@@ -56,4 +56,47 @@ class Action:
             acknowledged_at=data.get("acknowledged_at"),
             completed_at=data.get("completed_at"),
             created_at=data.get("created_at"),
+        )
+
+
+@dataclass
+class FeedItem:
+    """A single feed item returned by the feeds API.
+
+    Timestamps are ISO 8601 strings; ``expires_at`` is ``None`` for permanent items.
+    """
+
+    id: str
+    external_id: str
+    data: dict[str, Any]
+    expires_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeedItem:
+        return cls(
+            id=data["id"],
+            external_id=data["external_id"],
+            data=data.get("data") or {},
+            expires_at=data.get("expires_at"),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
+
+
+@dataclass
+class FeedReplaceResult:
+    """Item counts returned by :meth:`~confish.Feed.replace`."""
+
+    created: int
+    updated: int
+    deleted: int
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeedReplaceResult:
+        return cls(
+            created=data["created"],
+            updated=data["updated"],
+            deleted=data["deleted"],
         )

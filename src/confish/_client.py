@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from types import TracebackType
-from typing import Any, cast
 
 import httpx
 
 from ._actions import Actions
+from ._config import Config
+from ._feeds import Feed
 from ._http import HttpClient
-from ._types import LogLevel
+from ._logs import Logs
 
 DEFAULT_BASE_URL = "https://confi.sh"
 
@@ -18,10 +19,11 @@ class Confish:
 
     Example:
         client = Confish(env_id="...", api_key="...")
-        config = client.fetch()  # -> dict[str, Any]
+        config = client.config.fetch()  # -> dict[str, Any]
 
-    Use ``cast(MyConfig, client.fetch())`` (with ``MyConfig`` being a ``TypedDict``)
-    or ``MyModel.model_validate(client.fetch())`` (with Pydantic) to add typing.
+    Use ``cast(MyConfig, client.config.fetch())`` (with ``MyConfig`` being a
+    ``TypedDict``) or ``MyModel.model_validate(client.config.fetch())`` (with
+    Pydantic) to add typing.
     """
 
     def __init__(
@@ -49,8 +51,9 @@ class Confish:
             max_retry_delay=max_retry_delay,
             client=http_client,
         )
+        self.config = Config(self._http, env_id)
         self.actions = Actions(self._http, env_id)
-        self.logger = Logger(self)
+        self.logs = Logs(self._http, env_id)
 
     def __enter__(self) -> Confish:
         return self
@@ -66,62 +69,10 @@ class Confish:
     def close(self) -> None:
         self._http.close()
 
-    def fetch(self) -> dict[str, Any]:
-        """Fetch the environment's configuration values."""
-        return cast(dict[str, Any], self._http.request("GET", f"/c/{self._env_id}"))
+    def feed(self, slug: str) -> Feed:
+        """Return a handle bound to the feed with the given slug.
 
-    def update(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Partially update configuration values (PATCH). Returns the full updated config."""
-        return cast(
-            dict[str, Any],
-            self._http.request("PATCH", f"/c/{self._env_id}", body={"values": values}),
-        )
-
-    def replace(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Replace all configuration values (PUT). Omitted fields reset to defaults."""
-        return cast(
-            dict[str, Any],
-            self._http.request("PUT", f"/c/{self._env_id}", body={"values": values}),
-        )
-
-    def log(
-        self,
-        *,
-        level: LogLevel,
-        message: str,
-        context: dict[str, Any] | None = None,
-    ) -> str:
-        """Send a log entry. Returns the new log entry's ID."""
-        body: dict[str, Any] = {"level": level, "message": message}
-        if context is not None:
-            body["context"] = context
-        response = self._http.request("POST", f"/c/{self._env_id}/log", body=body)
-        return cast(str, response["id"])
-
-
-class Logger:
-    """Convenience wrapper around ``Confish.log`` with one method per level."""
-
-    def __init__(self, client: Confish) -> None:
-        self._client = client
-
-    def debug(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="debug", message=message, context=context)
-
-    def info(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="info", message=message, context=context)
-
-    def notice(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="notice", message=message, context=context)
-
-    def warning(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="warning", message=message, context=context)
-
-    def error(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="error", message=message, context=context)
-
-    def critical(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="critical", message=message, context=context)
-
-    def alert(self, message: str, context: dict[str, Any] | None = None) -> str:
-        return self._client.log(level="alert", message=message, context=context)
+        Constructing the handle performs no HTTP; an unknown slug surfaces as
+        :class:`~confish.NotFoundError` when a method is called.
+        """
+        return Feed(self._http, self._env_id, slug)

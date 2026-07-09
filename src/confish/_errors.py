@@ -5,7 +5,7 @@ from typing import Any
 
 
 class ConfishError(Exception):
-    """Base class for every error the SDK raises from a confish API response."""
+    """Base class for every error the SDK raises."""
 
     def __init__(
         self,
@@ -34,6 +34,10 @@ class AuthError(ConfishError):
 
 class ForbiddenError(ConfishError):
     """HTTP 403 — API key doesn't match the environment, or application is disabled."""
+
+
+class NotFoundError(ConfishError):
+    """HTTP 404 — the resource doesn't exist (e.g. an unknown feed slug)."""
 
 
 class ConflictError(ConfishError):
@@ -87,6 +91,18 @@ class ServerError(ConfishError):
     """HTTP 5xx — server-side error."""
 
 
+class WebhookVerificationError(ConfishError):
+    """Base class for webhook verification failures raised by :func:`confish.webhook.verify`."""
+
+
+class WebhookSignatureError(WebhookVerificationError):
+    """The webhook signature is missing, malformed, or doesn't match the body."""
+
+
+class WebhookTimestampError(WebhookVerificationError):
+    """The webhook timestamp is outside the allowed tolerance window (possible replay)."""
+
+
 def error_from_response(status: int, body: Any, headers: dict[str, str]) -> ConfishError:
     message = _message_from_body(body, fallback=f"Request failed ({status})")
 
@@ -94,6 +110,8 @@ def error_from_response(status: int, body: Any, headers: dict[str, str]) -> Conf
         return AuthError(message, status_code=status, body=body)
     if status == 403:
         return ForbiddenError(message, status_code=status, body=body)
+    if status == 404:
+        return NotFoundError(message, status_code=status, body=body)
     if status == 409:
         return ConflictError(message, status_code=status, body=body)
     if status == 422:

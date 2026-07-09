@@ -11,41 +11,41 @@ from confish import (
 )
 
 
-def test_fetch_returns_typed_dict(httpx_mock):
+def test_config_fetch_returns_typed_dict(httpx_mock):
     httpx_mock.add_response(
         url="https://api.test/c/env_test",
         method="GET",
         json={"site_name": "My App", "max_upload_mb": 25, "maintenance_mode": False},
     )
     client = Confish(env_id="env_test", api_key="confish_sk_test", base_url="https://api.test")
-    config = client.fetch()
+    config = client.config.fetch()
     assert config["site_name"] == "My App"
     request = httpx_mock.get_request()
     assert request.headers["authorization"] == "Bearer confish_sk_test"
 
 
-def test_update_wraps_values_in_patch(httpx_mock):
+def test_config_update_wraps_values_in_patch(httpx_mock):
     httpx_mock.add_response(
         url="https://api.test/c/env_test",
         method="PATCH",
         json={"site_name": "X", "max_upload_mb": 50, "maintenance_mode": True},
     )
     client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
-    client.update({"maintenance_mode": True, "max_upload_mb": 50})
+    client.config.update({"maintenance_mode": True, "max_upload_mb": 50})
 
     import json
     body = json.loads(httpx_mock.get_request().content)
     assert body == {"values": {"maintenance_mode": True, "max_upload_mb": 50}}
 
 
-def test_replace_uses_put(httpx_mock):
+def test_config_replace_uses_put(httpx_mock):
     httpx_mock.add_response(
         url="https://api.test/c/env_test",
         method="PUT",
         json={},
     )
     client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
-    client.replace({"site_name": "X"})
+    client.config.replace({"site_name": "X"})
     assert httpx_mock.get_request().method == "PUT"
 
 
@@ -58,7 +58,7 @@ def test_auth_error_on_401(httpx_mock):
     )
     client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
     with pytest.raises(AuthError) as exc:
-        client.fetch()
+        client.config.fetch()
     assert exc.value.message == "Missing API key"
 
 
@@ -74,7 +74,7 @@ def test_validation_error_exposes_field_errors(httpx_mock):
     )
     client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
     with pytest.raises(ValidationError) as exc:
-        client.update({"x": 1})
+        client.config.update({"x": 1})
     assert exc.value.errors == {"values.max_upload_mb": ["Must be at most 100."]}
 
 
@@ -95,7 +95,7 @@ def test_rate_limit_retries_then_succeeds(httpx_mock):
         env_id="env_test", api_key="k", base_url="https://api.test",
         max_retries=1, max_retry_delay=0.01,
     )
-    assert client.fetch() == {"ok": True}
+    assert client.config.fetch() == {"ok": True}
 
 
 def test_rate_limit_exhausts_retries(httpx_mock):
@@ -112,7 +112,7 @@ def test_rate_limit_exhausts_retries(httpx_mock):
         max_retries=2, max_retry_delay=0.01,
     )
     with pytest.raises(RateLimitError) as exc:
-        client.fetch()
+        client.config.fetch()
     assert exc.value.limit == 60
 
 
@@ -128,7 +128,7 @@ def test_conflict_on_ack(httpx_mock):
         client.actions.ack("a1")
 
 
-def test_logger_sends_level_and_context(httpx_mock):
+def test_logs_write_sends_level_and_context(httpx_mock):
     httpx_mock.add_response(
         url="https://api.test/c/env_test/log",
         method="POST",
@@ -136,12 +136,58 @@ def test_logger_sends_level_and_context(httpx_mock):
         json={"id": "log_1"},
     )
     client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
-    log_id = client.logger.info("hello", {"user_id": 1})
+    log_id = client.logs.write("info", "hello", {"user_id": 1})
     assert log_id == "log_1"
 
     import json
     body = json.loads(httpx_mock.get_request().content)
     assert body == {"level": "info", "message": "hello", "context": {"user_id": 1}}
+
+
+def test_logs_write_omits_context_when_unset(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.test/c/env_test/log",
+        method="POST",
+        status_code=201,
+        json={"id": "log_1"},
+    )
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    client.logs.write("warning", "heads up")
+
+    import json
+    body = json.loads(httpx_mock.get_request().content)
+    assert body == {"level": "warning", "message": "heads up"}
+
+
+def test_logs_per_level_method_sends_level_and_context(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.test/c/env_test/log",
+        method="POST",
+        status_code=201,
+        json={"id": "log_1"},
+    )
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    log_id = client.logs.info("hello", {"user_id": 1})
+    assert log_id == "log_1"
+
+    import json
+    body = json.loads(httpx_mock.get_request().content)
+    assert body == {"level": "info", "message": "hello", "context": {"user_id": 1}}
+
+
+def test_logs_emergency_level(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.test/c/env_test/log",
+        method="POST",
+        status_code=201,
+        json={"id": "log_1"},
+    )
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    client.logs.emergency("everything is on fire")
+
+    import json
+    body = json.loads(httpx_mock.get_request().content)
+    assert body == {"level": "emergency", "message": "everything is on fire"}
 
 
 def test_constructor_validates_required_fields():

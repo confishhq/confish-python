@@ -37,6 +37,21 @@ def test_list_unwraps_actions_array(httpx_mock):
     assert isinstance(actions[0], Action)
 
 
+def test_progress_posts_to_update_endpoint(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.test/c/env_test/actions/a1/update",
+        method="POST",
+        json=_pending("a1"),
+    )
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    action = client.actions.progress("a1", "closing 3 positions", {"step": 2})
+    assert isinstance(action, Action)
+
+    import json
+    body = json.loads(httpx_mock.get_request().content)
+    assert body == {"message": "closing 3 positions", "data": {"step": 2}}
+
+
 def test_complete_with_result(httpx_mock):
     httpx_mock.add_response(
         url="https://api.test/c/env_test/actions/a1/complete",
@@ -85,6 +100,11 @@ def test_consume_processes_action(httpx_mock):
         json=_pending("a1"),
     )
     httpx_mock.add_response(
+        url="https://api.test/c/env_test/actions/a1/update",
+        method="POST",
+        json=_pending("a1"),
+    )
+    httpx_mock.add_response(
         url="https://api.test/c/env_test/actions/a1/complete",
         method="POST",
         json=_pending("a1"),
@@ -96,6 +116,7 @@ def test_consume_processes_action(httpx_mock):
 
     def handler(action: Action, ctx: Any) -> dict[str, Any]:
         received.append(action)
+        ctx.progress("working on it")
         return {"filled": True}
 
     thread = threading.Thread(
@@ -112,11 +133,16 @@ def test_consume_processes_action(httpx_mock):
     thread.join(timeout=2)
 
     assert received and received[0].id == "a1"
+    import json
+    progress_request = next(
+        r for r in httpx_mock.get_requests()
+        if r.method == "POST" and r.url.path.endswith("/update")
+    )
+    assert json.loads(progress_request.content) == {"message": "working on it"}
     complete_request = next(
         r for r in httpx_mock.get_requests()
         if r.method == "POST" and r.url.path.endswith("/complete")
     )
-    import json
     assert json.loads(complete_request.content) == {"result": {"filled": True}}
 
 
