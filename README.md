@@ -1,6 +1,6 @@
 # confish
 
-Official Python SDK for [confish](https://confi.sh) — typed configuration, feeds, actions, and webhook verification.
+Official Python SDK for [confish](https://confi.sh) — typed configuration, actions, logs, feeds, and webhook verification.
 
 - One dependency (`httpx`)
 - Sync client with typed exceptions and automatic retry on `429`/`5xx`
