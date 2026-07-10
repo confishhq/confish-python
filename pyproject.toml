@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "confish"
 version = "0.2.0"
-description = "Official Python SDK for confish — typed configuration, actions, and webhooks."
+description = "Official Python SDK for confish — typed configuration, actions, logs, feeds, and webhook verification."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "confish" }]
