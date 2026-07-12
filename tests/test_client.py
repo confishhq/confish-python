@@ -159,6 +159,69 @@ def test_logs_write_omits_context_when_unset(httpx_mock):
     assert body == {"level": "warning", "message": "heads up"}
 
 
+def test_logs_write_batch_sends_entries_and_returns_ids(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.test/c/env_test/logs",
+        method="POST",
+        status_code=201,
+        json={"ids": ["log_1", "log_2"]},
+    )
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    ids = client.logs.write_batch([
+        {"level": "info", "message": "crawl started"},
+        {
+            "level": "error",
+            "message": "fetch failed",
+            "context": {"url": "https://example.com"},
+            "timestamp": "2026-07-12T08:30:00+00:00",
+        },
+    ])
+    assert ids == ["log_1", "log_2"]
+
+    import json
+    body = json.loads(httpx_mock.get_request().content)
+    assert body == {
+        "entries": [
+            {"level": "info", "message": "crawl started"},
+            {
+                "level": "error",
+                "message": "fetch failed",
+                "context": {"url": "https://example.com"},
+                "timestamp": "2026-07-12T08:30:00+00:00",
+            },
+        ]
+    }
+
+
+def test_logs_write_batch_accepts_exactly_100_entries(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.test/c/env_test/logs",
+        method="POST",
+        status_code=201,
+        json={"ids": []},
+    )
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    client.logs.write_batch([{"level": "info", "message": f"m{i}"} for i in range(100)])
+
+    import json
+    body = json.loads(httpx_mock.get_request().content)
+    assert len(body["entries"]) == 100
+
+
+def test_logs_write_batch_rejects_more_than_100_entries(httpx_mock):
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    entries = [{"level": "info", "message": f"m{i}"} for i in range(101)]
+    with pytest.raises(ValueError, match="at most 100"):
+        client.logs.write_batch(entries)
+    assert httpx_mock.get_requests() == []  # fails fast, no request made
+
+
+def test_logs_write_batch_empty_list_sends_nothing(httpx_mock):
+    client = Confish(env_id="env_test", api_key="k", base_url="https://api.test")
+    assert client.logs.write_batch([]) == []
+    assert httpx_mock.get_requests() == []
+
+
 def test_logs_per_level_method_sends_level_and_context(httpx_mock):
     httpx_mock.add_response(
         url="https://api.test/c/env_test/log",

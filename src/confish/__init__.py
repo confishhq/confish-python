@@ -24,6 +24,7 @@ from ._errors import (
     WebhookVerificationError,
 )
 from ._feeds import Feed
+from ._logging import ConfishHandler
 from ._logs import Logs
 from ._types import Action, ActionStatus, ActionUpdate, FeedItem, FeedReplaceResult, LogLevel
 
@@ -39,6 +40,7 @@ __all__ = [
     "Config",
     "Confish",
     "ConfishError",
+    "ConfishHandler",
     "ConflictError",
     "Feed",
     "FeedItem",

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0 (2026-07-12)
+
+### Added
+
+- **stdlib `logging` adapter.** `ConfishHandler` is a `logging.Handler` that
+  ships records to confish in the background: bounded in-memory queue
+  (default 1000 entries), flushed by a daemon thread once 50 records are
+  queued or every 5 seconds (whichever first), chunked to at most 100
+  entries per request. Overflow drops the oldest records; drops and failed
+  sends are counted on `handler.dropped` and reported to the optional
+  `on_error` callback — `emit` never raises and never logs through the
+  handler itself. `extra={...}` keys become the entry `context`, `exc_info`
+  is included as a formatted string, and timestamps are captured at log
+  time (`record.created`). Stdlib levels map by threshold; `notice`,
+  `alert`, and `emergency` remain reachable via `client.logs`. `close()`
+  flushes with a bounded timeout and is registered via `atexit`.
+- `client.logs.write_batch(entries)` — send up to 100 log entries in one
+  `POST /c/{env}/logs` request, each with optional `context` and
+  `timestamp`; returns the created entry IDs in order. More than 100
+  entries raises `ValueError` without making a request; an empty list
+  sends nothing and returns `[]`.
+
 ## 0.2.0 (2026-07-09)
 
 Coordinated minor release across all five confish SDKs. Breaking changes are

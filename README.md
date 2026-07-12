@@ -117,9 +117,55 @@ client.logs.error("Job failed", {"job_id": "abc"})
 
 # Or with an explicit level:
 log_id = client.logs.write("info", "User logged in", {"user_id": 123})
+
+# Or in one batched request — each entry takes an optional context and
+# ISO 8601 timestamp:
+ids = client.logs.write_batch([
+    {"level": "info", "message": "Crawl started"},
+    {"level": "error", "message": "Fetch failed", "context": {"url": "https://example.com/sitemap.xml"}},
+])
 ```
 
+`write_batch` caps at 100 entries per request — passing more raises `ValueError` before anything is sent, so split larger batches into chunks of 100. An empty list is a no-op that returns `[]`.
+
 Levels: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, `emergency`. They follow RFC 5424 (syslog), so they map 1:1 onto stdlib `logging` levels.
+
+### Use with the `logging` module
+
+`ConfishHandler` is a stdlib `logging.Handler`, so the log calls you already have become a confish sink — no call sites change:
+
+```python
+import logging
+from confish import Confish, ConfishHandler
+
+client = Confish(env_id="...", api_key="...")
+logging.getLogger().addHandler(ConfishHandler(client))
+
+logging.info("Crawl started", extra={"job_id": "sitemap-2026-07-12"})
+logging.error("Checkout probe failed", extra={"region": "eu-west-1"})
+```
+
+Records are buffered in memory and shipped by a daemon thread — a log call never blocks on the network and never raises. The buffer flushes once 50 records are queued or every 5 seconds, whichever comes first, batching up to 100 entries per request:
+
+```python
+handler = ConfishHandler(
+    client,
+    level=logging.INFO,   # stdlib threshold — pass logging.DEBUG for everything
+    queue_size=1000,      # bounded buffer; overflow drops the oldest records
+    flush_at=50,          # flush as soon as this many records are queued...
+    flush_interval=5.0,   # ...or after this many seconds, whichever first
+    on_error=lambda exc: print(f"confish sink: {exc}"),  # never logged through itself
+)
+```
+
+What happens automatically:
+
+- `extra={...}` keys become the entry's `context`; values that aren't JSON-serializable fall back to their `repr`. `logger.exception(...)` adds the formatted traceback as `context["exc_info"]`.
+- Timestamps are captured when you log (`record.created`), not when the batch is sent.
+- Messages are `%`-formatted lazily (`logger.warning("retry %d of %d", 2, 5)`).
+- Stdlib levels map by threshold: `DEBUG→debug`, `INFO→info`, `WARNING→warning`, `ERROR→error`, `CRITICAL→critical` (custom numeric levels land on the nearest lower band). The remaining RFC 5424 levels — `notice`, `alert`, `emergency` — have no stdlib equivalent; send those through `client.logs.notice(...)` and friends.
+- Delivery is best-effort by design: if the queue overflows or a batch can't be delivered after the client's retries, those records are dropped, counted on `handler.dropped`, and reported to `on_error`. The handler never logs through itself, so a broken sink can't feed itself.
+- `handler.flush()` sends everything queued right now; `handler.close()` flushes, stops the thread (bounded by `close_timeout`), and is registered via `atexit` — short-lived crawls and cron jobs don't lose their tail on exit.
 
 ## Actions
 
